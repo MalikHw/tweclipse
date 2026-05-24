@@ -163,7 +163,8 @@ private:
                 auto jRes = r.json();
                 if (jRes.isErr()) { log::error("[TwitchRift] uid fetch failed"); return; }
                 auto& j = jRes.unwrap();
-                auto arr = j["data"].asArray().unwrapOr(matjson::Array{});
+                using ArrayType = std::vector<matjson::Value>;
+                auto arr = j["data"].asArray().unwrapOr(ArrayType{});
                 if (arr.empty()) { log::error("[TwitchRift] channel '{}' not found", channel); return; }
                 m_broadcasterId = arr[0]["id"].asString().unwrapOr("");
                 fetchFollowers();
@@ -192,7 +193,8 @@ private:
             [](web::WebResponse r) {
                 auto jRes = r.json();
                 if (jRes.isErr()) return;
-                auto arr = jRes.unwrap()["data"].asArray().unwrapOr(matjson::Array{});
+                using ArrayType = std::vector<matjson::Value>;
+                auto arr = jRes.unwrap()["data"].asArray().unwrapOr(ArrayType{});
                 if (!arr.empty()) riftStr("twitch-last-sub", arr[0]["user_name"].asString().unwrapOr(""));
             }
         );
