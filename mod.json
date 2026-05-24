@@ -7,14 +7,32 @@
         "ios": "2.2081"
     },
     "version": "1.0.0",
-    "id": "MalikHw.tweclipse",
-    "name": "tweclipse",
-    "developer": "MalikHw",
-    "description": "desc.",
-    "tags": ["yes", "yeah"],
+    "id": "malikhw47.tweclipse",
+    "name": "Tweclipse",
+    "developer": "MalikHw47",
+    "description": "Eclipse Labels variables for twitch streamers!",
+    "tags": ["utility", "customization"],
     "links": {
         "source": "https://github.com/MalikHw/tweclipse",
         "community": "https://discord.gg/G9bZ92eg2n"
     },
-    "settings": {}
+    "settings": {
+        "twitch-channel": {
+            "name": "Channel Name",
+          "description": "Your Twitch channel name (must match exactly, case-insensitive)",
+            "type": "string",
+            "default": ""
+        },
+        "twitch-login-button": {
+            "name": "Twitch Login",
+            "description": "auth Twitch via device code flow",
+            "type": "custom:twitch-login-button"
+        },
+            "twitch-access-token": {
+            "name": "Access Token",
+            "description": "OAuth access token, filled automatically after login. ignore it for now.",
+            "type": "string",
+            "default": ""
+        }
+    }
 }
