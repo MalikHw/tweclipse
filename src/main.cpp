@@ -73,6 +73,7 @@ public:
     }
 
     void startLogin(std::function<void(bool, std::string)> cb, std::function<void()> successCb = nullptr) {
+        log::info("[TwitchRift] Starting login flow...");
         m_loginCb = std::move(cb);
         m_loginSuccessCb = std::move(successCb);
         auto req = web::WebRequest();
@@ -83,6 +84,7 @@ public:
         );
         m_devicetask.spawn("tr-device", req.post("https://id.twitch.tv/oauth2/device"),
             [this](web::WebResponse r) {
+                log::info("[TwitchRift] Device code response: {}", r.code());
                 if (!r.ok()) { if (m_loginCb) m_loginCb(false, "http " + std::to_string(r.code())); return; }
                 auto jRes = r.json();
                 if (jRes.isErr()) { if (m_loginCb) m_loginCb(false, "bad json"); return; }
@@ -91,6 +93,7 @@ public:
                 m_userCode    = j["user_code"].asString().unwrapOr("");
                 m_verifyUrl   = j["verification_uri"].asString().unwrapOr("https://twitch.tv/activate");
                 m_pollSecs    = j["interval"].asInt().unwrapOr(5);
+                log::info("[TwitchRift] Got device code, starting polling every {} seconds", m_pollSecs);
                 if (m_loginCb) m_loginCb(true,
                     "Go to <cy>" + m_verifyUrl + "</c> and enter <cy>" + m_userCode + "</c>");
                 pollToken();
@@ -121,6 +124,7 @@ private:
     TwitchManager() = default;
 
     void pollToken() {
+        log::info("[TwitchRift] Polling for token...");
         auto req = web::WebRequest();
         req.header("Content-Type", "application/x-www-form-urlencoded");
         req.bodyString(
@@ -166,6 +170,19 @@ private:
     }
 
     void reschedule() {
+        log::info("[TwitchRift] Rescheduling poll in {} seconds", m_pollSecs);
+        
+        // Make sure scheduler is in a scene
+        if (!m_schedulerNode->getParent()) {
+            log::warn("[TwitchRift] Scheduler not in scene, re-adding...");
+            if (auto scene = CCDirector::get()->getRunningScene()) {
+                scene->addChild(m_schedulerNode);
+            } else {
+                log::error("[TwitchRift] No running scene!");
+                return;
+            }
+        }
+        
         // scheduleOnce(SEL_SCHEDULE, float), proper selector, no lambda, no key
         m_schedulerNode->scheduleOnce(
             schedule_selector(TwitchSchedulerNode::rescheduleTick),
