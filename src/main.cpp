@@ -41,6 +41,9 @@ public:
         riftStr("twitch-last-non-bot-chat", "");
         riftStr("twitch-last-bits", "");
         riftInt("twitch-follow-count", 0);
+        // set up scheduler node
+        m_schedulerNode = CCNode::create();
+        m_schedulerNode->retain();
         if (!m_token.empty()) resolveUserId();
     }
 
@@ -55,13 +58,12 @@ public:
         m_devicetask.spawn("tr-device", req.post("https://id.twitch.tv/oauth2/device"),
             [this](web::WebResponse r) {
                 if (!r.ok()) { if (m_loginCb) m_loginCb(false, "http " + std::to_string(r.code())); return; }
-                auto j = r.json();
-                if (!j) { if (m_loginCb) m_loginCb(false, "bad json"); return; }
-                auto& v = j.value();
-                m_deviceCode  = v["device_code"].asString().unwrapOr("");
-                m_userCode    = v["user_code"].asString().unwrapOr("");
-                m_verifyUrl   = v["verification_uri"].asString().unwrapOr("https://twitch.tv/activate");
-                m_pollSecs    = v["interval"].asInt().unwrapOr(5);
+                auto j = r.json().unwrapOr({});
+                if (j.isNull()) { if (m_loginCb) m_loginCb(false, "bad json"); return; }
+                m_deviceCode  = j["device_code"].asString().unwrapOr("");
+                m_userCode    = j["user_code"].asString().unwrapOr("");
+                m_verifyUrl   = j["verification_uri"].asString().unwrapOr("https://twitch.tv/activate");
+                m_pollSecs    = j["interval"].asInt().unwrapOr(5);
                 if (m_loginCb) m_loginCb(true,
                     "Go to <cy>" + m_verifyUrl + "</c> and enter <cy>" + m_userCode + "</c>");
                 pollToken();
@@ -101,11 +103,10 @@ private:
         );
         m_tokentask.spawn("tr-poll", req.post("https://id.twitch.tv/oauth2/token"),
             [this](web::WebResponse r) {
-                auto j = r.json();
-                if (!j) { reschedule(); return; }
-                auto& v = j.value();
-                if (v.contains("access_token")) {
-                    m_token = v["access_token"].asString().unwrapOr("");
+                auto j = r.json().unwrapOr({});
+                if (j.isNull()) { reschedule(); return; }
+                if (j.contains("access_token")) {
+                    m_token = j["access_token"].asString().unwrapOr("");
                     Mod::get()->setSavedValue("access-token", m_token);
                     Mod::get()->setSettingValue("twitch-access-token", m_token);
                     FLAlertLayer::create("Twitch Rift", "Logged in!", "OK")->show();
@@ -118,10 +119,7 @@ private:
     }
 
     void reschedule() {
-        CCDirector::get()->getScheduler()->scheduleBlock(
-            [this](float) { pollToken(); }, CCDirector::get(),
-            (float)m_pollSecs, 0, 0.f, false, "tr_token_poll"
-        );
+        m_schedulerNode->scheduleOnce([this](float) { pollToken(); }, (float)m_pollSecs, "tr_token_poll");
     }
 
     void resolveUserId() {
@@ -131,9 +129,9 @@ private:
         req.param("login", channel);
         m_usertask.spawn("tr-uid", req.get("https://api.twitch.tv/helix/users"),
             [this, channel](web::WebResponse r) {
-                auto j = r.json();
-                if (!j) { log::error("[TwitchRift] uid fetch failed"); return; }
-                auto arr = j.value()["data"].asArray().unwrapOr({});
+                auto j = r.json().unwrapOr({});
+                if (j.isNull()) { log::error("[TwitchRift] uid fetch failed"); return; }
+                auto arr = j["data"].asArray().unwrapOr({});
                 if (arr.empty()) { log::error("[TwitchRift] channel '{}' not found", channel); return; }
                 m_broadcasterId = arr[0]["id"].asString().unwrapOr("");
                 fetchFollowers();
@@ -147,9 +145,9 @@ private:
         req.param("broadcaster_id", m_broadcasterId);
         m_followtask.spawn("tr-followers", req.get("https://api.twitch.tv/helix/channels/followers"),
             [](web::WebResponse r) {
-                auto j = r.json();
-                if (!j) return;
-                riftInt("twitch-follow-count", j.value()["total"].asInt().unwrapOr(0));
+                auto j = r.json().unwrapOr({});
+                if (j.isNull()) return;
+                riftInt("twitch-follow-count", j["total"].asInt().unwrapOr(0));
             }
         );
     }
@@ -160,9 +158,9 @@ private:
         req.param("first", "1");
         m_subtask.spawn("tr-sub", req.get("https://api.twitch.tv/helix/subscriptions"),
             [](web::WebResponse r) {
-                auto j = r.json();
-                if (!j) return;
-                auto arr = j.value()["data"].asArray().unwrapOr({});
+                auto j = r.json().unwrapOr({});
+                if (j.isNull()) return;
+                auto arr = j["data"].asArray().unwrapOr({});
                 if (!arr.empty()) riftStr("twitch-last-sub", arr[0]["user_name"].asString().unwrapOr(""));
             }
         );
@@ -174,10 +172,19 @@ private:
         subscribeEvent("channel.follow", "2");
         subscribeEvent("channel.cheer", "1");
         subscribeEvent("channel.chat.message", "1");
-        CCDirector::get()->getScheduler()->scheduleBlock(
-            [this](float) { fetchFollowers(); fetchLatestSub(); },
-            CCDirector::get(), 10.f, kCCRepeatForever, 0.f, false, "tr_poll"
+        // add to scene so scheduleSelector works
+        if (auto scene = CCDirector::get()->getRunningScene()) {
+            scene->addChild(m_schedulerNode);
+        }
+        CCDirector::get()->getScheduler()->scheduleSelector(
+            schedule_selector(TwitchManager::onPollTick), m_schedulerNode,
+            10.f, kCCRepeatForever, 0.f, false
         );
+    }
+
+    void onPollTick(float) {
+        fetchFollowers();
+        fetchLatestSub();
     }
 
     void subscribeEvent(std::string type, std::string version) {
@@ -207,21 +214,25 @@ private:
     int m_pollSecs = 5;
     std::function<void(bool, std::string)> m_loginCb;
     async::TaskHolder<web::WebResponse> m_devicetask, m_tokentask, m_usertask, m_followtask, m_subtask, m_eventtask;
+    CCNode* m_schedulerNode = nullptr;
 };
 
-class TwitchLoginSettingValue : public SettingBaseValueV3<std::string> {
+class TwitchLoginSettingValue : public SettingV3 {
 public:
-    static Result<std::shared_ptr<TwitchLoginSettingValue>> parse(
+    static Result<std::shared_ptr<SettingV3>> parse(
         std::string const& key, std::string const& modID, matjson::Value const& json
     ) {
         auto res = std::make_shared<TwitchLoginSettingValue>();
-        res->init(key, modID, json);
-        return Ok(std::move(res));
+        auto root = checkJson(json, "TwitchLoginSettingValue");
+        res->init(key, modID, root);
+        res->parseNameAndDescription(root);
+        root.checkUnknownKeys();
+        return root.ok(std::static_pointer_cast<SettingV3>(res));
     }
     bool load(matjson::Value const&) override { return true; }
     bool save(matjson::Value&) const override { return true; }
-    std::string getValue() const override { return ""; }
-    void setValue(std::string) override {}
+    bool isDefaultValue() const override { return true; }
+    void reset() override {}
     SettingNodeV3* createNode(float width) override;
 };
 
@@ -270,10 +281,10 @@ public:
             FLAlertLayer::create("Twitch Login", msg.c_str(), "OK")->show();
         });
     }
-    void onResetToDefault(CCObject*) override {}
+    void onCommit() override {}
+    void onResetToDefault() override {}
     bool hasUncommittedChanges() const override { return false; }
     bool hasNonDefaultValue() const override { return false; }
-    void commit() override {}
 };
 
 SettingNodeV3* TwitchLoginSettingValue::createNode(float width) {
