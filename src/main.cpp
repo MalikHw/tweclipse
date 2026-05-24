@@ -31,13 +31,11 @@ class TwitchSchedulerNode : public CCNode {
 public:
     std::function<void()> onPoll;
     std::function<void()> onReschedule;
-
     static TwitchSchedulerNode* create() {
         auto ret = new TwitchSchedulerNode();
         if (ret->init()) { ret->autorelease(); return ret; }
         CC_SAFE_DELETE(ret); return nullptr;
     }
-
     void pollTick(float) {
         if (onPoll) onPoll();
     }
@@ -163,8 +161,9 @@ private:
                 auto jRes = r.json();
                 if (jRes.isErr()) { log::error("[TwitchRift] uid fetch failed"); return; }
                 auto& j = jRes.unwrap();
-                using ArrayType = std::vector<matjson::Value>;
-                auto arr = j["data"].asArray().unwrapOr(ArrayType{});
+                auto arrRes = j["data"].asArray();
+                if (arrRes.isErr()) { log::error("[TwitchRift] invalid data format"); return; }
+                auto& arr = arrRes.unwrap();
                 if (arr.empty()) { log::error("[TwitchRift] channel '{}' not found", channel); return; }
                 m_broadcasterId = arr[0]["id"].asString().unwrapOr("");
                 fetchFollowers();
@@ -193,9 +192,9 @@ private:
             [](web::WebResponse r) {
                 auto jRes = r.json();
                 if (jRes.isErr()) return;
-                using ArrayType = std::vector<matjson::Value>;
-                auto arr = jRes.unwrap()["data"].asArray().unwrapOr(ArrayType{});
-                if (!arr.empty()) riftStr("twitch-last-sub", arr[0]["user_name"].asString().unwrapOr(""));
+                auto arrRes = jRes.unwrap()["data"].asArray();
+                if (arrRes.isErr() || arrRes.unwrap().empty()) return;
+                riftStr("twitch-last-sub", arrRes.unwrap()[0]["user_name"].asString().unwrapOr(""));
             }
         );
     }
