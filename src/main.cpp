@@ -192,7 +192,15 @@ private:
 
     void resolveUserId() {
         auto channel = Mod::get()->getSettingValue<std::string>("twitch-channel");
-        if (channel.empty()) { log::warn("[TwitchRift] no channel set"); return; }
+        if (channel.empty()) {
+            log::warn("[TwitchRift] no channel set");
+            FLAlertLayer::create(
+                "Tweclipse Setup",
+                "Please set your <cy>Channel Name</c> in Tweclipse settings to start fetching data!",
+                "OK"
+            )->show();
+            return;
+        }
         auto req = authedReq(m_token);
         req.param("login", channel);
         m_usertask.spawn("tr-uid", req.get("https://api.twitch.tv/helix/users"),
