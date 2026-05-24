@@ -10,9 +10,11 @@ static const std::vector<std::string> KNOWN_BOTS = {"streamelements", "nightbot"
 static constexpr const char* CLIENT_ID = "z13q05symz1eo7pwavolpqir8p4w3k";
 
 static void riftStr(std::string k, std::string v) {
+    log::debug("[TwitchRift] Setting RIFT string '{}' = '{}'", k, v);
     eclipse::label::setVariable<std::string>(std::move(k), std::move(v));
 }
 static void riftInt(std::string k, int64_t v) {
+    log::debug("[TwitchRift] Setting RIFT int '{}' = {}", k, v);
     eclipse::label::setVariable<int64_t>(std::move(k), v);
 }
 static bool isBot(const std::string& u) {
@@ -201,10 +203,12 @@ private:
             )->show();
             return;
         }
+        log::info("[TwitchRift] Resolving user ID for channel: {}", channel);
         auto req = authedReq(m_token);
         req.param("login", channel);
         m_usertask.spawn("tr-uid", req.get("https://api.twitch.tv/helix/users"),
             [this, channel](web::WebResponse r) {
+                log::info("[TwitchRift] User lookup response: {}", r.code());
                 auto jRes = r.json();
                 if (jRes.isErr()) { log::error("[TwitchRift] uid fetch failed"); return; }
                 auto& j = jRes.unwrap();
@@ -213,6 +217,7 @@ private:
                 auto& arr = arrRes.unwrap();
                 if (arr.empty()) { log::error("[TwitchRift] channel '{}' not found", channel); return; }
                 m_broadcasterId = arr[0]["id"].asString().unwrapOr("");
+                log::info("[TwitchRift] Got broadcaster ID: {}", m_broadcasterId);
                 fetchFollowers();
                 startPolling();
             }
@@ -220,28 +225,45 @@ private:
     }
 
     void fetchFollowers() {
+        log::info("[TwitchRift] Fetching followers for broadcaster: {}", m_broadcasterId);
         auto req = authedReq(m_token);
         req.param("broadcaster_id", m_broadcasterId);
         m_followtask.spawn("tr-followers", req.get("https://api.twitch.tv/helix/channels/followers"),
             [](web::WebResponse r) {
+                log::info("[TwitchRift] Followers response: {}", r.code());
                 auto jRes = r.json();
-                if (jRes.isErr()) return;
-                riftInt("twitch-follow-count", jRes.unwrap()["total"].asInt().unwrapOr(0));
+                if (jRes.isErr()) {
+                    log::error("[TwitchRift] Failed to parse followers JSON");
+                    return;
+                }
+                auto count = jRes.unwrap()["total"].asInt().unwrapOr(0);
+                log::info("[TwitchRift] Setting follower count to: {}", count);
+                riftInt("twitch-follow-count", count);
             }
         );
     }
 
     void fetchLatestSub() {
+        log::info("[TwitchRift] Fetching latest sub for broadcaster: {}", m_broadcasterId);
         auto req = authedReq(m_token);
         req.param("broadcaster_id", m_broadcasterId);
         req.param("first", "1");
         m_subtask.spawn("tr-sub", req.get("https://api.twitch.tv/helix/subscriptions"),
             [](web::WebResponse r) {
+                log::info("[TwitchRift] Subscriptions response: {}", r.code());
                 auto jRes = r.json();
-                if (jRes.isErr()) return;
+                if (jRes.isErr()) {
+                    log::error("[TwitchRift] Failed to parse subscriptions JSON");
+                    return;
+                }
                 auto arrRes = jRes.unwrap()["data"].asArray();
-                if (arrRes.isErr() || arrRes.unwrap().empty()) return;
-                riftStr("twitch-last-sub", arrRes.unwrap()[0]["user_name"].asString().unwrapOr(""));
+                if (arrRes.isErr() || arrRes.unwrap().empty()) {
+                    log::info("[TwitchRift] No subscriptions found");
+                    return;
+                }
+                auto username = arrRes.unwrap()[0]["user_name"].asString().unwrapOr("");
+                log::info("[TwitchRift] Latest subscriber: {}", username);
+                riftStr("twitch-last-sub", username);
             }
         );
     }
