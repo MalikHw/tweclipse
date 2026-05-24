@@ -7,13 +7,13 @@
         "ios": "2.2081"
     },
     "version": "1.0.0",
-    "id": "GEODE-AUTHOR-NAME.GEODE-PROJECT-NAME",
-    "name": "GEODE-PROJECT-NAME",
-    "developer": "GEODE-AUTHOR-NAME",
+    "id": "MalikHw.tweclipse",
+    "name": "tweclipse",
+    "developer": "MalikHw",
     "description": "desc.",
     "tags": ["yes", "yeah"],
     "links": {
-        "source": "https://github.com/GEODE-AUTHOR-NAME/GEODE-PROJECT-NAME",
+        "source": "https://github.com/MalikHw/tweclipse",
         "community": "https://discord.gg/G9bZ92eg2n"
     },
     "settings": {}
