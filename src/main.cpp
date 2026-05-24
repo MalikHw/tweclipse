@@ -1,6 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/utils/web.hpp>
-#include <Geode/loader/SettingNode.hpp>
+#include <Geode/loader/SettingV3.hpp>
 #include <eclipse.eclipse-menu/include/eclipse.hpp>
 
 using namespace geode::prelude;
