@@ -31,11 +31,13 @@ class TwitchSchedulerNode : public CCNode {
 public:
     std::function<void()> onPoll;
     std::function<void()> onReschedule;
+
     static TwitchSchedulerNode* create() {
         auto ret = new TwitchSchedulerNode();
         if (ret->init()) { ret->autorelease(); return ret; }
         CC_SAFE_DELETE(ret); return nullptr;
     }
+
     void pollTick(float) {
         if (onPoll) onPoll();
     }
@@ -70,8 +72,9 @@ public:
         if (!m_token.empty()) resolveUserId();
     }
 
-    void startLogin(std::function<void(bool, std::string)> cb) {
+    void startLogin(std::function<void(bool, std::string)> cb, std::function<void()> successCb = nullptr) {
         m_loginCb = std::move(cb);
+        m_loginSuccessCb = std::move(successCb);
         auto req = web::WebRequest();
         req.header("Content-Type", "application/x-www-form-urlencoded");
         req.bodyString(
@@ -127,16 +130,35 @@ private:
         );
         m_tokentask.spawn("tr-poll", req.post("https://id.twitch.tv/oauth2/token"),
             [this](web::WebResponse r) {
+                if (!r.ok()) {
+                    log::debug("[TwitchRift] poll response: {}", r.code());
+                    reschedule();
+                    return;
+                }
                 auto jRes = r.json();
-                if (jRes.isErr()) { reschedule(); return; }
+                if (jRes.isErr()) {
+                    log::debug("[TwitchRift] poll json error");
+                    reschedule();
+                    return;
+                }
                 auto& j = jRes.unwrap();
                 if (j.contains("access_token")) {
                     m_token = j["access_token"].asString().unwrapOr("");
                     Mod::get()->setSavedValue("access-token", m_token);
                     Mod::get()->setSettingValue("twitch-access-token", m_token);
+                    log::info("[TwitchRift] Login successful!");
+                    
+                    // Notify UI that login succeeded
+                    if (m_loginSuccessCb) {
+                        m_loginSuccessCb();
+                        m_loginSuccessCb = nullptr;
+                    }
+                    m_loginCb = nullptr;
+                    
                     FLAlertLayer::create("Twitch Rift", "Logged in!", "OK")->show();
                     resolveUserId();
                 } else {
+                    log::debug("[TwitchRift] waiting for authorization...");
                     reschedule();
                 }
             }
@@ -238,6 +260,7 @@ private:
     std::string m_token, m_broadcasterId, m_deviceCode, m_userCode, m_verifyUrl, m_sessionId;
     int m_pollSecs = 5;
     std::function<void(bool, std::string)> m_loginCb;
+    std::function<void()> m_loginSuccessCb;
     async::TaskHolder<web::WebResponse> m_devicetask, m_tokentask, m_usertask, m_followtask, m_subtask, m_eventtask;
     TwitchSchedulerNode* m_schedulerNode = nullptr;
 };
@@ -264,6 +287,7 @@ public:
 class TwitchLoginSettingNode : public SettingNodeV3 {
     CCLabelBMFont* m_status = nullptr;
     CCMenuItemSpriteExtra* m_btn = nullptr;
+    FLAlertLayer* m_loginPopup = nullptr;
 
     void refreshUI() {
         auto& tm = TwitchManager::get();
@@ -301,10 +325,34 @@ public:
         auto& tm = TwitchManager::get();
         if (tm.isLoggedIn()) { tm.disconnect(); refreshUI(); return; }
         m_status->setString("Waiting...");
-        tm.startLogin([this](bool ok, std::string msg) {
-            if (!ok) { FLAlertLayer::create("Twitch Rift", ("Error: " + msg).c_str(), "OK")->show(); refreshUI(); return; }
-            FLAlertLayer::create("Twitch Login", msg.c_str(), "OK")->show();
-        });
+        tm.startLogin(
+            // Initial callback - shows device code popup
+            [this](bool ok, std::string msg) {
+                // Close the previous popup if it exists
+                if (m_loginPopup) {
+                    m_loginPopup->keyBackClicked();
+                    m_loginPopup = nullptr;
+                }
+                
+                if (!ok) {
+                    FLAlertLayer::create("Twitch Rift", ("Error: " + msg).c_str(), "OK")->show();
+                    refreshUI();
+                    return;
+                }
+                
+                // Show the device code popup and store reference
+                m_loginPopup = FLAlertLayer::create("Twitch Login", msg.c_str(), "OK");
+                m_loginPopup->show();
+            },
+            // Success callback - close popup and refresh UI
+            [this]() {
+                if (m_loginPopup) {
+                    m_loginPopup->keyBackClicked();
+                    m_loginPopup = nullptr;
+                }
+                refreshUI();
+            }
+        );
     }
     void onCommit() override {}
     void onResetToDefault() override {}
